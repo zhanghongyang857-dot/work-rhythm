@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import FocusDataCore
 import SwiftUI
 import TimerCore
 
@@ -29,7 +30,7 @@ struct WorkRhythmV0App: App {
         Window("活动管理与复盘", id: "activity-management") {
             ActivityManagementView(timer: appDelegate.timer)
         }
-        .defaultSize(width: 620, height: 520)
+        .defaultSize(width: 800, height: 660)
     }
 }
 
@@ -88,7 +89,7 @@ final class FloatingPanelController {
     }
 
     func handleSleep() {
-        timer.simulateSleep()
+        timer.handleSleep()
     }
 
     func prepareForTermination() {
@@ -100,7 +101,7 @@ final class FloatingPanelController {
 final class FloatingPanel: NSPanel {
     init(contentView: NSView) {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 344, height: 314),
+            contentRect: NSRect(x: 0, y: 0, width: 344, height: 238),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -126,13 +127,15 @@ final class TimerViewModel: ObservableObject {
     @Published private(set) var activities: [Activity]
     @Published private(set) var selectedActivityID: UUID?
     @Published private(set) var records: [FocusRecord]
-    @Published private(set) var offset: TimeInterval = 0
     private var ticker: Timer?
     private let stateStore: LocalStateStore
     private var activeSegment: ActiveFocusSegment?
 
-    var now: Date { Date().addingTimeInterval(offset) }
-    var todayFocus: TimeInterval { engine.todayFocus(at: now) }
+    var now: Date { Date() }
+    var todayFocus: TimeInterval {
+        guard let today = FocusStatistics.dayInterval(for: now) else { return 0 }
+        return FocusStatistics.total(records: allRecords, during: today)
+    }
     var remainingBreak: TimeInterval { engine.remainingBreakSeconds(at: now) }
     var remainingRest: TimeInterval { engine.remainingRestSeconds(at: now) }
     var selectedActivity: Activity? { activities.first { $0.id == selectedActivityID && $0.status == .active } }
@@ -144,11 +147,9 @@ final class TimerViewModel: ObservableObject {
             let focusedSeconds = max(0, engine.activeFocus(at: now) - activeSegment.focusAtStart)
             if focusedSeconds > 0 {
                 result.append(FocusRecord(
-                    id: UUID(),
                     activityID: activeSegment.activityID,
                     startedAt: activeSegment.startedAt,
-                    endedAt: now,
-                    focusedSeconds: focusedSeconds
+                    endedAt: activeSegment.startedAt.addingTimeInterval(focusedSeconds)
                 ))
             }
         }
@@ -280,15 +281,7 @@ final class TimerViewModel: ObservableObject {
         records.filter { $0.activityID == activityID }.count
     }
 
-    func adjustRecord(_ recordID: UUID, byMinutes delta: Int) {
-        guard let index = records.firstIndex(where: { $0.id == recordID }) else { return }
-        records[index].focusedSeconds = max(0, records[index].focusedSeconds + TimeInterval(delta * 60))
-        persist()
-        refresh()
-    }
-
-    func advance(minutes: Int) { offset += TimeInterval(minutes * 60); refresh() }
-    func simulateSleep() { pause() }
+    func handleSleep() { pause() }
 
     func beginBreak() {
         guard engine.status == .breakDue else { return }
@@ -334,21 +327,6 @@ final class TimerViewModel: ObservableObject {
         if engine.status == .running { pause() } else { persist() }
     }
 
-    func resetDebugData() {
-        ticker?.invalidate()
-        ticker = nil
-        engine = TimerEngine()
-        activities = []
-        selectedActivityID = nil
-        records = []
-        activeSegment = nil
-        offset = 0
-        stateStore.reset()
-        LocalNotificationManager.shared.cancelFocusReminder()
-        LocalNotificationManager.shared.cancelRestReminder()
-        refresh()
-    }
-
     private func beginTicking() {
         guard ticker == nil else { return }
         ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -361,11 +339,9 @@ final class TimerViewModel: ObservableObject {
         let focusedSeconds = max(0, engine.activeFocus(at: date) - activeSegment.focusAtStart)
         if focusedSeconds > 0 {
             records.append(FocusRecord(
-                id: UUID(),
                 activityID: activeSegment.activityID,
                 startedAt: activeSegment.startedAt,
-                endedAt: date,
-                focusedSeconds: focusedSeconds
+                endedAt: activeSegment.startedAt.addingTimeInterval(focusedSeconds)
             ))
         }
         self.activeSegment = nil
@@ -416,127 +392,115 @@ struct V0FloatingTimerView: View {
     @ObservedObject var timer: TimerViewModel
 
     var body: some View {
-        VStack(spacing: 11) {
-            HStack {
-                Text("WORK RHYTHM")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .tracking(1.4)
-                Spacer()
-                Text("V4 测试样机")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.tertiary)
-            }
+        VStack(spacing: 10) {
+            activityPicker
 
-            HStack(spacing: 18) {
+            HStack(spacing: 26) {
                 TimerRing(
-                    label: "今天累计",
+                    label: "今天",
                     value: formatTodayTotal(timer.todayFocus),
-                    detail: "有效专注时长",
                     progress: min(timer.todayFocus / (8 * 60 * 60), 1),
-                    color: Color(red: 0.36, green: 0.34, blue: 0.86),
+                    color: WorkRhythmStyle.focus,
                     valueFontSize: 25
                 )
                 TimerRing(
                     label: rightRingLabel,
                     value: format(rightRingValue),
-                    detail: rightRingDetail,
                     progress: rightRingProgress,
                     color: rightRingColor,
                     valueFontSize: 25
                 )
             }
 
-            HStack(spacing: 6) {
-                Menu {
-                    if timer.selectableActivities.isEmpty {
-                        Text("请在菜单栏中管理活动")
-                    } else {
-                        ForEach(timer.selectableActivities) { activity in
-                            Button(activity.name) { timer.selectActivity(activity.id) }
-                        }
-                    }
-                } label: {
-                    Label(timer.selectedActivity?.name ?? "选择活动", systemImage: "bookmark")
-                        .lineLimit(1)
-                }
-                .menuStyle(.borderlessButton)
-
-                Spacer()
-                if timer.selectableActivities.isEmpty {
-                    Text("请在菜单栏管理活动")
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .font(.system(size: 11, weight: .medium))
-
             if timer.engine.status == .breakDue {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Button("开始休息") { timer.beginBreak() }
                     Button("延后10分") { timer.deferBreak() }
                     Button("跳过") { timer.skipBreak() }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .controlSize(.small)
             } else if timer.engine.status == .resting {
-                Text("休息进行中")
-                    .font(.system(size: 12, weight: .semibold))
+                Text("休息中 · \(format(timer.remainingRest))")
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
             } else {
-                HStack(spacing: 7) {
-                    Button(primaryActionLabel) { timer.startOrResume() }
-                        .disabled(!timer.canStart || timer.engine.status == .running)
-                    Button("暂停") { timer.pause() }.disabled(timer.engine.status != .running)
-                    Button("结束") { timer.stop() }.disabled(timer.engine.status == .idle)
-                }
-                .buttonStyle(.borderedProminent)
+                Color.clear
+                    .frame(width: 304, height: 30)
+                    .overlay {
+                    Button(primaryActionLabel) {
+                        timer.engine.status == .running ? timer.pause() : timer.startOrResume()
+                    }
+                    .disabled(timer.engine.status != .running && !timer.canStart)
+                    .buttonStyle(FloatingPrimaryButtonStyle(isQuiet: timer.engine.status == .running))
+                    }
+                    .overlay(alignment: .trailing) {
+
+                    Menu {
+                        Button("结束") { timer.stop() }
+                            .disabled(timer.engine.status == .idle)
+                        Divider()
+                        Button("开启系统提醒") { timer.enableNotifications() }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .frame(width: 28, height: 28)
+                            .background(WorkRhythmStyle.controlSurface, in: Circle())
+                    }
+                    .menuStyle(.borderlessButton)
+                    }
                 .controlSize(.small)
             }
-
-#if DEBUG
-            HStack(spacing: 8) {
-                Button("+1 分钟") { timer.advance(minutes: 1) }
-                Button("+50 分钟") { timer.advance(minutes: 50) }
-                Button("模拟睡眠") { timer.simulateSleep() }
-                Button("重置测试") { timer.resetDebugData() }
-            }
-            .buttonStyle(.borderless)
-            .font(.system(size: 10))
-#endif
-
-            Button("开启系统提醒") { timer.enableNotifications() }
-                .buttonStyle(.borderless)
-                .font(.system(size: 10))
-
-            Text(statusText)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
         }
-        .padding(18)
-        .frame(width: 344, height: 340)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .frame(width: 344, height: 238)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: WorkRhythmStyle.floatingCornerRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(.white.opacity(0.65), lineWidth: 1)
-        }
-    }
-
-    private var statusText: String {
-        switch timer.engine.status {
-        case .idle: "测试数据仅本机保存"
-        case .running: "正在专注 · 测试数据仅本机保存"
-        case .paused: "已暂停 · 测试数据仅本机保存"
-        case .breakDue: "专注周期完成 · 待开始休息"
-        case .resting: "正在休息 · 休息结束后可开始下一轮"
+            RoundedRectangle(cornerRadius: WorkRhythmStyle.floatingCornerRadius, style: .continuous)
+                .strokeBorder(.primary.opacity(0.09), lineWidth: 1)
         }
     }
 
     private var primaryActionLabel: String {
         switch timer.engine.status {
+        case .running: "暂停"
         case .paused: "继续"
-        case .running: "进行中"
         default: "开始"
         }
+    }
+
+    private var activityPicker: some View {
+        HStack {
+            Spacer()
+            Menu {
+                if timer.selectableActivities.isEmpty {
+                    Text("请先在复盘窗口创建活动")
+                } else {
+                    ForEach(timer.selectableActivities) { activity in
+                        Button {
+                            timer.selectActivity(activity.id)
+                        } label: {
+                            if timer.selectedActivityID == activity.id {
+                                Label(activity.name, systemImage: "checkmark")
+                            } else {
+                                Text(activity.name)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Text(timer.selectedActivity?.name ?? "选择活动")
+                    .lineLimit(1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(WorkRhythmStyle.controlSurface, in: Capsule())
+                .contentShape(Capsule())
+            }
+            .menuStyle(.borderlessButton)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .font(.system(size: 13, weight: .medium))
     }
 
     private var rightRingLabel: String {
@@ -551,14 +515,6 @@ struct V0FloatingTimerView: View {
         timer.engine.status == .resting ? timer.remainingRest : timer.remainingBreak
     }
 
-    private var rightRingDetail: String {
-        switch timer.engine.status {
-        case .breakDue: "待开始休息"
-        case .resting: "剩余休息时间"
-        default: "剩余专注时间"
-        }
-    }
-
     private var rightRingProgress: Double {
         switch timer.engine.status {
         case .breakDue: 1
@@ -569,8 +525,8 @@ struct V0FloatingTimerView: View {
 
     private var rightRingColor: Color {
         timer.engine.status == .resting
-            ? Color(red: 0.92, green: 0.54, blue: 0.22)
-            : Color(red: 0.17, green: 0.65, blue: 0.47)
+            ? WorkRhythmStyle.rest
+            : WorkRhythmStyle.focus
     }
 
     private func format(_ seconds: TimeInterval) -> String {
@@ -587,7 +543,6 @@ struct V0FloatingTimerView: View {
 struct TimerRing: View {
     let label: String
     let value: String
-    let detail: String
     let progress: Double
     let color: Color
     let valueFontSize: CGFloat
@@ -607,13 +562,38 @@ struct TimerRing: View {
                 Text(value)
                     .font(.system(size: valueFontSize, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                Text(detail)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
             }
         }
         .frame(width: 114, height: 114)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label) \(value)，\(detail)")
+        .accessibilityLabel("\(label) \(value)")
+    }
+}
+
+enum WorkRhythmStyle {
+    static let floatingCornerRadius: CGFloat = 22
+    static let focus = Color(red: 0.29, green: 0.33, blue: 0.54)
+    static let rest = Color(red: 0.52, green: 0.42, blue: 0.32)
+    static let controlSurface = Color.primary.opacity(0.07)
+}
+
+struct FloatingPrimaryButtonStyle: ButtonStyle {
+    let isQuiet: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        if isQuiet {
+            configuration.label
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.primary)
+                .padding(.horizontal, 22)
+                .frame(height: 30)
+        } else {
+            configuration.label
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.white)
+                .padding(.horizontal, 22)
+                .frame(height: 30)
+                .background(WorkRhythmStyle.focus.opacity(configuration.isPressed ? 0.76 : 1), in: Capsule())
+        }
     }
 }

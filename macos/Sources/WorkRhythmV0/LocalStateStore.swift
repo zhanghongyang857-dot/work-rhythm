@@ -1,43 +1,6 @@
 import Foundation
+import FocusDataCore
 import TimerCore
-
-enum ActivityStatus: String, Codable, Equatable {
-    case active, inactive, archived
-}
-
-struct Activity: Codable, Identifiable, Equatable {
-    let id: UUID
-    var name: String
-    let createdAt: Date
-    var status: ActivityStatus
-
-    init(name: String) {
-        id = UUID()
-        self.name = name
-        createdAt = Date()
-        status = .active
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id, name, createdAt, status
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
-        name = try container.decode(String.self, forKey: .name)
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
-        status = try container.decodeIfPresent(ActivityStatus.self, forKey: .status) ?? .active
-    }
-}
-
-struct FocusRecord: Codable, Identifiable, Equatable {
-    let id: UUID
-    let activityID: UUID
-    let startedAt: Date
-    let endedAt: Date
-    var focusedSeconds: TimeInterval
-}
 
 struct ActiveFocusSegment: Codable, Equatable {
     let activityID: UUID
@@ -83,8 +46,4 @@ struct LocalStateStore {
         try? data.write(to: stateURL, options: .atomic)
     }
 
-    func reset() {
-        guard fileManager.fileExists(atPath: stateURL.path) else { return }
-        try? fileManager.removeItem(at: stateURL)
-    }
 }

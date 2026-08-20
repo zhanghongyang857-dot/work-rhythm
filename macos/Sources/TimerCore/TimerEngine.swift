@@ -95,7 +95,8 @@ public struct TimerEngine: Codable {
         return max(0, end.timeIntervalSince(startedAt) - pausedFocus)
     }
 
-    public func todayFocus(at now: Date) -> TimeInterval {
+    /// Timer-engine accumulation. Calendar-day totals must be derived from immutable focus records.
+    public func cumulativeFocus(at now: Date) -> TimeInterval {
         completedFocus + activeFocus(at: now)
     }
 

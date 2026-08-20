@@ -1,14 +1,14 @@
 # Work Rhythm
 
-Work Rhythm 是一个本地优先的 macOS 工作节律工具。当前从 V0 桌面浮窗样机重新开始开发。
+Work Rhythm 是一个本地优先的 macOS 工作节律工具。MVP 的核心计时、活动、休息与本地保存已完成，当前进入浮窗体验与可信复盘的整合改进。
 
 ## 当前状态
 
 旧 Tauri 原型已从工作目录删除，不再参与开发；完整历史仍可从 Git 初始提交恢复。
 
-下一阶段回到产品问题与核心使用闭环，先以本地浏览器原型快速验证，不要求打包、安装或部署 macOS App。
+当前继续以原生 macOS 调试样机验证，不要求打包、安装或部署；不再回到浏览器原型或旧桌面技术栈。
 
-当前唯一有效的产品与开发执行基准是 [`docs/development-baseline-v2.md`](docs/development-baseline-v2.md)。项目冻结原因与重启背景见 [`docs/project-status-2026-08-20.md`](docs/project-status-2026-08-20.md)。
+当前唯一有效的产品与开发执行基准是 [`docs/development-plan-v3.md`](docs/development-plan-v3.md)。原生重启背景见 [`docs/project-status-2026-08-20.md`](docs/project-status-2026-08-20.md)。
 
 ## 文档归档
 
@@ -16,5 +16,5 @@ Work Rhythm 是一个本地优先的 macOS 工作节律工具。当前从 V0 桌
 
 ## 仓库结构
 
-- `macos/`：新的 Swift / SwiftUI 原生实现；下一步仅在此创建 V0 浮窗样机。
+- `macos/`：Swift / SwiftUI 原生实现。
 - `docs/`：当前基准、验收记录与历史归档。

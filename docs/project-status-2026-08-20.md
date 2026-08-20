@@ -4,7 +4,7 @@
 
 现有 Work Rhythm 的 Tauri 桌面端原型已冻结。后续不再围绕它补功能，也不将 Tauri、React、Rust、旧双窗口结构、旧菜单栏或 SQLite 视为下一阶段的前提。
 
-下一阶段仍以 macOS 原生桌面浮窗为最终形态，但采用可直接运行的本地调试样机逐阶段验证，而不是最后才交付完整安装包。具体范围、技术和验收方式见 [`development-baseline-v2.md`](development-baseline-v2.md)。
+后续仍以 macOS 原生桌面浮窗为最终形态，采用可直接运行的本地调试样机验证，而不是最后才交付完整安装包。当前范围、技术和验收方式见 [`development-plan-v3.md`](development-plan-v3.md)。
 
 ## 当前原型保留了什么
 
@@ -29,4 +29,4 @@
 - 旧桌面原型仅存在于 Git 历史中，不在工作目录继续保留。
 - 新原生实现将位于 `macos/`，从 V0 开始。
 - 旧执行文档位于 `docs/archive/`，它们不再是执行基准。
-- 当前有效执行基准为 `docs/development-baseline-v2.md`；不得沿用旧桌面端基准直接推进开发。
+- 当前有效执行基准为 `docs/development-plan-v3.md`；不得沿用旧桌面端基准直接推进开发。
