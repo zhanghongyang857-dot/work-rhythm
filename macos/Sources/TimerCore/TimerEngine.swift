@@ -1,10 +1,10 @@
 import Foundation
 
-public enum TimerStatus: Equatable {
+public enum TimerStatus: String, Codable, Equatable {
     case idle, running, paused, breakDue
 }
 
-public struct TimerEngine {
+public struct TimerEngine: Codable {
     public private(set) var status: TimerStatus = .idle
     private(set) var startedAt: Date?
     private(set) var pausedAt: Date?

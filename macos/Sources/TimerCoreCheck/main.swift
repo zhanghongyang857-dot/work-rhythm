@@ -28,4 +28,9 @@ precondition(breakDue.status == .breakDue)
 precondition(breakDue.todayFocus(at: start.addingTimeInterval(55 * 60)) == 50 * 60)
 precondition(breakDue.remainingBreakSeconds(at: start.addingTimeInterval(55 * 60)) == 0)
 
-print("TimerCoreCheck: 4 checks passed")
+let encoded = try JSONEncoder().encode(resumed)
+let decoded = try JSONDecoder().decode(TimerEngine.self, from: encoded)
+precondition(decoded.status == .idle)
+precondition(decoded.todayFocus(at: start.addingTimeInterval(600)) == 300)
+
+print("TimerCoreCheck: 5 checks passed")
