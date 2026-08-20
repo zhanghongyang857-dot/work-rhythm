@@ -6,8 +6,11 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .executable(name: "WorkRhythmV0", targets: ["WorkRhythmV0"]),
+        .executable(name: "TimerCoreCheck", targets: ["TimerCoreCheck"]),
     ],
     targets: [
-        .executableTarget(name: "WorkRhythmV0"),
+        .target(name: "TimerCore"),
+        .executableTarget(name: "WorkRhythmV0", dependencies: ["TimerCore"]),
+        .executableTarget(name: "TimerCoreCheck", dependencies: ["TimerCore"]),
     ],
 )

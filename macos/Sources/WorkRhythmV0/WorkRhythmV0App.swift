@@ -1,5 +1,7 @@
 import AppKit
+import Combine
 import SwiftUI
+import TimerCore
 
 @main
 struct WorkRhythmV0App: App {
@@ -22,13 +24,24 @@ struct WorkRhythmV0App: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: FloatingPanelController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
         panelController = FloatingPanelController()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleWillSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
         showPanel()
+    }
+
+    @objc private func handleWillSleep(_ notification: Notification) {
+        panelController?.handleSleep()
     }
 
     func showPanel() {
@@ -40,11 +53,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+@MainActor
 final class FloatingPanelController {
     private let panel: FloatingPanel
+    private let timer = TimerViewModel()
 
     init() {
-        let content = NSHostingView(rootView: V0FloatingTimerView())
+        let content = NSHostingView(rootView: V0FloatingTimerView(timer: timer))
         panel = FloatingPanel(contentView: content)
     }
 
@@ -56,8 +71,13 @@ final class FloatingPanelController {
     func hide() {
         panel.orderOut(nil)
     }
+
+    func handleSleep() {
+        timer.simulateSleep()
+    }
 }
 
+@MainActor
 final class FloatingPanel: NSPanel {
     init(contentView: NSView) {
         super.init(
@@ -81,7 +101,43 @@ final class FloatingPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+@MainActor
+final class TimerViewModel: ObservableObject {
+    @Published private(set) var engine = TimerEngine()
+    @Published private(set) var offset: TimeInterval = 0
+    private var ticker: Timer?
+
+    var now: Date { Date().addingTimeInterval(offset) }
+    var todayFocus: TimeInterval { engine.todayFocus(at: now) }
+    var remainingBreak: TimeInterval { engine.remainingBreakSeconds(at: now) }
+
+    func startOrResume() {
+        if engine.status == .paused { engine.resume(at: now) } else { engine.start(at: now) }
+        beginTicking()
+        refresh()
+    }
+
+    func pause() { engine.pause(at: now); refresh() }
+    func stop() { engine.stop(at: now); ticker?.invalidate(); ticker = nil; refresh() }
+    func advance(minutes: Int) { offset += TimeInterval(minutes * 60); refresh() }
+    func simulateSleep() { engine.handleSleep(at: now); refresh() }
+
+    private func beginTicking() {
+        guard ticker == nil else { return }
+        ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+    }
+
+    private func refresh() {
+        engine.resolveBreakDue(at: now)
+        objectWillChange.send()
+    }
+}
+
 struct V0FloatingTimerView: View {
+    @ObservedObject var timer: TimerViewModel
+
     var body: some View {
         VStack(spacing: 14) {
             HStack {
@@ -90,7 +146,7 @@ struct V0FloatingTimerView: View {
                     .foregroundStyle(.secondary)
                     .tracking(1.4)
                 Spacer()
-                Text("V0 测试样机")
+                Text("V1 测试样机")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.tertiary)
             }
@@ -98,31 +154,69 @@ struct V0FloatingTimerView: View {
             HStack(spacing: 18) {
                 TimerRing(
                     label: "今天累计",
-                    value: "2:15",
+                    value: format(timer.todayFocus),
                     detail: "有效专注时长",
-                    progress: 0.62,
+                    progress: min(timer.todayFocus / (8 * 60 * 60), 1),
                     color: Color(red: 0.36, green: 0.34, blue: 0.86)
                 )
                 TimerRing(
-                    label: "下次休息",
-                    value: "12:34",
-                    detail: "剩余专注时间",
-                    progress: 0.25,
+                    label: timer.engine.status == .breakDue ? "该休息了" : "下次休息",
+                    value: format(timer.remainingBreak),
+                    detail: timer.engine.status == .breakDue ? "待开始休息" : "剩余专注时间",
+                    progress: timer.remainingBreak / (50 * 60),
                     color: Color(red: 0.17, green: 0.65, blue: 0.47)
                 )
             }
 
-            Text("仅验证浮窗外观与桌面行为，不计时、不保存数据")
+            if timer.engine.status == .breakDue {
+                Text("专注周期已完成")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 7) {
+                    Button(timer.engine.status == .paused ? "继续" : "开始") { timer.startOrResume() }
+                    Button("暂停") { timer.pause() }.disabled(timer.engine.status != .running)
+                    Button("结束") { timer.stop() }.disabled(timer.engine.status == .idle)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+
+#if DEBUG
+            HStack(spacing: 8) {
+                Button("+1 分钟") { timer.advance(minutes: 1) }
+                Button("+50 分钟") { timer.advance(minutes: 50) }
+                Button("模拟睡眠") { timer.simulateSleep() }
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 10))
+#endif
+
+            Text(statusText)
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
         }
         .padding(18)
-        .frame(width: 312, height: 236)
+        .frame(width: 312, height: 278)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(.white.opacity(0.65), lineWidth: 1)
         }
+    }
+
+    private var statusText: String {
+        switch timer.engine.status {
+        case .idle: "测试数据不会保存"
+        case .running: "正在专注 · 测试数据不会保存"
+        case .paused: "已暂停 · 测试数据不会保存"
+        case .breakDue: "专注周期完成 · 待开始休息"
+        }
+    }
+
+    private func format(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded(.down))
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 
