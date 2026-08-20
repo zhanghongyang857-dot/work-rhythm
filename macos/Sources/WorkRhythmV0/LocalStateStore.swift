@@ -1,15 +1,33 @@
 import Foundation
 import TimerCore
 
+enum ActivityStatus: String, Codable, Equatable {
+    case active, inactive, archived
+}
+
 struct Activity: Codable, Identifiable, Equatable {
     let id: UUID
-    let name: String
+    var name: String
     let createdAt: Date
+    var status: ActivityStatus
 
     init(name: String) {
         id = UUID()
         self.name = name
         createdAt = Date()
+        status = .active
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, createdAt, status
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        status = try container.decodeIfPresent(ActivityStatus.self, forKey: .status) ?? .active
     }
 }
 
@@ -18,7 +36,7 @@ struct FocusRecord: Codable, Identifiable, Equatable {
     let activityID: UUID
     let startedAt: Date
     let endedAt: Date
-    let focusedSeconds: TimeInterval
+    var focusedSeconds: TimeInterval
 }
 
 struct ActiveFocusSegment: Codable, Equatable {
@@ -41,7 +59,7 @@ struct LocalStateStore {
 
     private var stateFilename: String {
 #if DEBUG
-        "v3-debug-state.json"
+        "v4-debug-state.json"
 #else
         "state.json"
 #endif

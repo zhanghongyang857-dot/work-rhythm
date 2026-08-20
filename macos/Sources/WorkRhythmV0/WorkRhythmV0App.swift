@@ -6,6 +6,7 @@ import TimerCore
 @main
 struct WorkRhythmV0App: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         MenuBarExtra("Work Rhythm", systemImage: "timer") {
@@ -15,22 +16,31 @@ struct WorkRhythmV0App: App {
             Button("隐藏浮窗") {
                 appDelegate.hidePanel()
             }
+            Button("管理活动与复盘") {
+                openWindow(id: "activity-management")
+            }
             Divider()
             Button("退出测试") {
                 NSApplication.shared.terminate(nil)
             }
         }
         .menuBarExtraStyle(.menu)
+
+        Window("活动管理与复盘", id: "activity-management") {
+            ActivityManagementView(timer: appDelegate.timer)
+        }
+        .defaultSize(width: 620, height: 520)
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: FloatingPanelController?
+    let timer = TimerViewModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
-        panelController = FloatingPanelController()
+        panelController = FloatingPanelController(timer: timer)
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
             selector: #selector(handleWillSleep),
@@ -60,9 +70,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 final class FloatingPanelController {
     private let panel: FloatingPanel
-    private let timer = TimerViewModel()
+    private let timer: TimerViewModel
 
-    init() {
+    init(timer: TimerViewModel) {
+        self.timer = timer
         let content = NSHostingView(rootView: V0FloatingTimerView(timer: timer))
         panel = FloatingPanel(contentView: content)
     }
@@ -124,8 +135,25 @@ final class TimerViewModel: ObservableObject {
     var todayFocus: TimeInterval { engine.todayFocus(at: now) }
     var remainingBreak: TimeInterval { engine.remainingBreakSeconds(at: now) }
     var remainingRest: TimeInterval { engine.remainingRestSeconds(at: now) }
-    var selectedActivity: Activity? { activities.first { $0.id == selectedActivityID } }
+    var selectedActivity: Activity? { activities.first { $0.id == selectedActivityID && $0.status == .active } }
+    var selectableActivities: [Activity] { activities.filter { $0.status == .active } }
     var canStart: Bool { selectedActivity != nil && (engine.status == .idle || engine.status == .paused) }
+    var allRecords: [FocusRecord] {
+        var result = records
+        if let activeSegment {
+            let focusedSeconds = max(0, engine.activeFocus(at: now) - activeSegment.focusAtStart)
+            if focusedSeconds > 0 {
+                result.append(FocusRecord(
+                    id: UUID(),
+                    activityID: activeSegment.activityID,
+                    startedAt: activeSegment.startedAt,
+                    endedAt: now,
+                    focusedSeconds: focusedSeconds
+                ))
+            }
+        }
+        return result
+    }
 
     init(stateStore: LocalStateStore = LocalStateStore()) {
         self.stateStore = stateStore
@@ -191,7 +219,7 @@ final class TimerViewModel: ObservableObject {
     }
 
     func selectActivity(_ activityID: UUID) {
-        guard activities.contains(where: { $0.id == activityID }) else { return }
+        guard activities.contains(where: { $0.id == activityID && $0.status == .active }) else { return }
         if engine.status == .running { pause() }
         selectedActivityID = activityID
         persist()
@@ -210,6 +238,53 @@ final class TimerViewModel: ObservableObject {
         persist()
         refresh()
         return true
+    }
+
+    func renameActivity(_ activityID: UUID, to name: String) {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty,
+              !activities.contains(where: { $0.id != activityID && $0.name.caseInsensitiveCompare(cleanName) == .orderedSame }),
+              let index = activities.firstIndex(where: { $0.id == activityID }) else { return }
+        activities[index].name = cleanName
+        persist()
+        refresh()
+    }
+
+    func setActivityStatus(_ activityID: UUID, to status: ActivityStatus) {
+        guard let index = activities.firstIndex(where: { $0.id == activityID }) else { return }
+        if selectedActivityID == activityID, status != .active {
+            if engine.status == .running { pause() }
+            selectedActivityID = selectableActivities.first(where: { $0.id != activityID })?.id
+        }
+        activities[index].status = status
+        persist()
+        refresh()
+    }
+
+    func deleteOrArchiveActivity(_ activityID: UUID) {
+        guard let index = activities.firstIndex(where: { $0.id == activityID }) else { return }
+        if records.contains(where: { $0.activityID == activityID }) {
+            setActivityStatus(activityID, to: .archived)
+            return
+        }
+        if selectedActivityID == activityID {
+            if engine.status == .running { pause() }
+            selectedActivityID = selectableActivities.first(where: { $0.id != activityID })?.id
+        }
+        activities.remove(at: index)
+        persist()
+        refresh()
+    }
+
+    func recordCount(for activityID: UUID) -> Int {
+        records.filter { $0.activityID == activityID }.count
+    }
+
+    func adjustRecord(_ recordID: UUID, byMinutes delta: Int) {
+        guard let index = records.firstIndex(where: { $0.id == recordID }) else { return }
+        records[index].focusedSeconds = max(0, records[index].focusedSeconds + TimeInterval(delta * 60))
+        persist()
+        refresh()
     }
 
     func advance(minutes: Int) { offset += TimeInterval(minutes * 60); refresh() }
@@ -339,8 +414,6 @@ final class TimerViewModel: ObservableObject {
 
 struct V0FloatingTimerView: View {
     @ObservedObject var timer: TimerViewModel
-    @State private var isCreatingActivity = false
-    @State private var newActivityName = ""
 
     var body: some View {
         VStack(spacing: 11) {
@@ -350,7 +423,7 @@ struct V0FloatingTimerView: View {
                     .foregroundStyle(.secondary)
                     .tracking(1.4)
                 Spacer()
-                Text("V3 测试样机")
+                Text("V4 测试样机")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.tertiary)
             }
@@ -376,10 +449,10 @@ struct V0FloatingTimerView: View {
 
             HStack(spacing: 6) {
                 Menu {
-                    if timer.activities.isEmpty {
-                        Text("先新建一个长期活动")
+                    if timer.selectableActivities.isEmpty {
+                        Text("请在菜单栏中管理活动")
                     } else {
-                        ForEach(timer.activities) { activity in
+                        ForEach(timer.selectableActivities) { activity in
                             Button(activity.name) { timer.selectActivity(activity.id) }
                         }
                     }
@@ -390,28 +463,12 @@ struct V0FloatingTimerView: View {
                 .menuStyle(.borderlessButton)
 
                 Spacer()
-
-                Button(isCreatingActivity ? "取消" : "新建") {
-                    isCreatingActivity.toggle()
-                    if !isCreatingActivity { newActivityName = "" }
+                if timer.selectableActivities.isEmpty {
+                    Text("请在菜单栏管理活动")
+                        .foregroundStyle(.tertiary)
                 }
-                .buttonStyle(.borderless)
             }
             .font(.system(size: 11, weight: .medium))
-
-            if isCreatingActivity {
-                HStack(spacing: 6) {
-                    TextField("例如：看论文", text: $newActivityName)
-                        .textFieldStyle(.roundedBorder)
-                    Button("保存") {
-                        if timer.createActivity(named: newActivityName) {
-                            newActivityName = ""
-                            isCreatingActivity = false
-                        }
-                    }
-                    .disabled(newActivityName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
 
             if timer.engine.status == .breakDue {
                 HStack(spacing: 6) {
