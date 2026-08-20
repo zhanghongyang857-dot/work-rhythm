@@ -41,7 +41,7 @@ struct LocalStateStore {
 
     private var stateFilename: String {
 #if DEBUG
-        "v2-debug-state.json"
+        "v3-debug-state.json"
 #else
         "state.json"
 #endif

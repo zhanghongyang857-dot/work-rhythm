@@ -123,8 +123,9 @@ final class TimerViewModel: ObservableObject {
     var now: Date { Date().addingTimeInterval(offset) }
     var todayFocus: TimeInterval { engine.todayFocus(at: now) }
     var remainingBreak: TimeInterval { engine.remainingBreakSeconds(at: now) }
+    var remainingRest: TimeInterval { engine.remainingRestSeconds(at: now) }
     var selectedActivity: Activity? { activities.first { $0.id == selectedActivityID } }
-    var canStart: Bool { selectedActivity != nil && engine.status != .breakDue }
+    var canStart: Bool { selectedActivity != nil && (engine.status == .idle || engine.status == .paused) }
 
     init(stateStore: LocalStateStore = LocalStateStore()) {
         self.stateStore = stateStore
@@ -148,6 +149,7 @@ final class TimerViewModel: ObservableObject {
             engine.pause(at: restored.savedAt)
             persist(at: restored.savedAt)
         }
+        if engine.status == .resting { beginTicking() }
     }
 
     func startOrResume() {
@@ -164,6 +166,7 @@ final class TimerViewModel: ObservableObject {
         )
         beginTicking()
         persist()
+        scheduleFocusReminder()
         refresh()
     }
 
@@ -171,6 +174,7 @@ final class TimerViewModel: ObservableObject {
         guard engine.status == .running else { return }
         finishActiveSegment(at: now)
         engine.pause(at: now)
+        LocalNotificationManager.shared.cancelFocusReminder()
         persist()
         refresh()
     }
@@ -179,6 +183,7 @@ final class TimerViewModel: ObservableObject {
         guard engine.status == .running || engine.status == .paused else { return }
         if engine.status == .running { finishActiveSegment(at: now) }
         engine.stop(at: now)
+        LocalNotificationManager.shared.cancelFocusReminder()
         ticker?.invalidate()
         ticker = nil
         persist()
@@ -210,6 +215,46 @@ final class TimerViewModel: ObservableObject {
     func advance(minutes: Int) { offset += TimeInterval(minutes * 60); refresh() }
     func simulateSleep() { pause() }
 
+    func beginBreak() {
+        guard engine.status == .breakDue else { return }
+        engine.beginBreak(at: now)
+        LocalNotificationManager.shared.cancelFocusReminder()
+        LocalNotificationManager.shared.scheduleRestCompletion(after: remainingRest)
+        beginTicking()
+        persist()
+        refresh()
+    }
+
+    func deferBreak() {
+        guard engine.status == .breakDue, let activityID = selectedActivityID else { return }
+        engine.deferBreak(at: now)
+        activeSegment = ActiveFocusSegment(
+            activityID: activityID,
+            startedAt: now,
+            focusAtStart: engine.activeFocus(at: now)
+        )
+        beginTicking()
+        scheduleFocusReminder()
+        persist()
+        refresh()
+    }
+
+    func skipBreak() {
+        guard engine.status == .breakDue else { return }
+        engine.skipBreak(at: now)
+        LocalNotificationManager.shared.cancelFocusReminder()
+        ticker?.invalidate()
+        ticker = nil
+        persist()
+        refresh()
+    }
+
+    func enableNotifications() {
+        LocalNotificationManager.shared.requestAuthorization { [weak self] in
+            self?.scheduleCurrentReminder()
+        }
+    }
+
     func prepareForTermination() {
         if engine.status == .running { pause() } else { persist() }
     }
@@ -224,6 +269,8 @@ final class TimerViewModel: ObservableObject {
         activeSegment = nil
         offset = 0
         stateStore.reset()
+        LocalNotificationManager.shared.cancelFocusReminder()
+        LocalNotificationManager.shared.cancelRestReminder()
         refresh()
     }
 
@@ -264,9 +311,29 @@ final class TimerViewModel: ObservableObject {
         if engine.status == .running, engine.remainingBreakSeconds(at: now) == 0 {
             finishActiveSegment(at: now)
             engine.resolveBreakDue(at: now)
+            LocalNotificationManager.shared.cancelFocusReminder()
+            persist()
+        }
+        if engine.status == .resting, engine.remainingRestSeconds(at: now) == 0 {
+            engine.resolveRestCompletion(at: now)
+            LocalNotificationManager.shared.cancelRestReminder()
+            ticker?.invalidate()
+            ticker = nil
             persist()
         }
         objectWillChange.send()
+    }
+
+    private func scheduleCurrentReminder() {
+        switch engine.status {
+        case .running: scheduleFocusReminder()
+        case .resting: LocalNotificationManager.shared.scheduleRestCompletion(after: remainingRest)
+        default: break
+        }
+    }
+
+    private func scheduleFocusReminder() {
+        LocalNotificationManager.shared.scheduleFocusReminder(after: remainingBreak)
     }
 }
 
@@ -283,7 +350,7 @@ struct V0FloatingTimerView: View {
                     .foregroundStyle(.secondary)
                     .tracking(1.4)
                 Spacer()
-                Text("V2 测试样机")
+                Text("V3 测试样机")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.tertiary)
             }
@@ -291,17 +358,19 @@ struct V0FloatingTimerView: View {
             HStack(spacing: 18) {
                 TimerRing(
                     label: "今天累计",
-                    value: format(timer.todayFocus),
+                    value: formatTodayTotal(timer.todayFocus),
                     detail: "有效专注时长",
                     progress: min(timer.todayFocus / (8 * 60 * 60), 1),
-                    color: Color(red: 0.36, green: 0.34, blue: 0.86)
+                    color: Color(red: 0.36, green: 0.34, blue: 0.86),
+                    valueFontSize: 25
                 )
                 TimerRing(
-                    label: timer.engine.status == .breakDue ? "该休息了" : "下次休息",
-                    value: format(timer.remainingBreak),
-                    detail: timer.engine.status == .breakDue ? "待开始休息" : "剩余专注时间",
-                    progress: timer.remainingBreak / (50 * 60),
-                    color: Color(red: 0.17, green: 0.65, blue: 0.47)
+                    label: rightRingLabel,
+                    value: format(rightRingValue),
+                    detail: rightRingDetail,
+                    progress: rightRingProgress,
+                    color: rightRingColor,
+                    valueFontSize: 25
                 )
             }
 
@@ -345,7 +414,15 @@ struct V0FloatingTimerView: View {
             }
 
             if timer.engine.status == .breakDue {
-                Text("专注周期已完成")
+                HStack(spacing: 6) {
+                    Button("开始休息") { timer.beginBreak() }
+                    Button("延后10分") { timer.deferBreak() }
+                    Button("跳过") { timer.skipBreak() }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            } else if timer.engine.status == .resting {
+                Text("休息进行中")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
             } else {
@@ -370,6 +447,10 @@ struct V0FloatingTimerView: View {
             .font(.system(size: 10))
 #endif
 
+            Button("开启系统提醒") { timer.enableNotifications() }
+                .buttonStyle(.borderless)
+                .font(.system(size: 10))
+
             Text(statusText)
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
@@ -389,6 +470,7 @@ struct V0FloatingTimerView: View {
         case .running: "正在专注 · 测试数据仅本机保存"
         case .paused: "已暂停 · 测试数据仅本机保存"
         case .breakDue: "专注周期完成 · 待开始休息"
+        case .resting: "正在休息 · 休息结束后可开始下一轮"
         }
     }
 
@@ -400,9 +482,48 @@ struct V0FloatingTimerView: View {
         }
     }
 
+    private var rightRingLabel: String {
+        switch timer.engine.status {
+        case .breakDue: "该休息了"
+        case .resting: "休息中"
+        default: "下次休息"
+        }
+    }
+
+    private var rightRingValue: TimeInterval {
+        timer.engine.status == .resting ? timer.remainingRest : timer.remainingBreak
+    }
+
+    private var rightRingDetail: String {
+        switch timer.engine.status {
+        case .breakDue: "待开始休息"
+        case .resting: "剩余休息时间"
+        default: "剩余专注时间"
+        }
+    }
+
+    private var rightRingProgress: Double {
+        switch timer.engine.status {
+        case .breakDue: 1
+        case .resting: 1 - timer.remainingRest / (5 * 60)
+        default: timer.remainingBreak / (50 * 60)
+        }
+    }
+
+    private var rightRingColor: Color {
+        timer.engine.status == .resting
+            ? Color(red: 0.92, green: 0.54, blue: 0.22)
+            : Color(red: 0.17, green: 0.65, blue: 0.47)
+    }
+
     private func format(_ seconds: TimeInterval) -> String {
         let total = Int(seconds.rounded(.down))
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    private func formatTodayTotal(_ seconds: TimeInterval) -> String {
+        let totalMinutes = Int(seconds.rounded(.down)) / 60
+        return String(format: "%02d:%02d", totalMinutes / 60, totalMinutes % 60)
     }
 }
 
@@ -412,6 +533,7 @@ struct TimerRing: View {
     let detail: String
     let progress: Double
     let color: Color
+    let valueFontSize: CGFloat
 
     var body: some View {
         ZStack {
@@ -426,7 +548,7 @@ struct TimerRing: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text(value)
-                    .font(.system(size: 25, weight: .semibold, design: .rounded))
+                    .font(.system(size: valueFontSize, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                 Text(detail)
                     .font(.system(size: 9))
