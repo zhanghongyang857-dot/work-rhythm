@@ -1,31 +1,20 @@
 # Work Rhythm
 
-一个完全本地运行的个人工作节律助手：计时、休息提醒、长期活动记录，以及每日／每月的工作节律统计。
-
-开发以 [`docs/implementation-baseline.md`](docs/implementation-baseline.md) 为唯一执行基准。其中包含范围、交互规则、技术架构、数据模型、轻量化约束、开发顺序与验收条件。
-
-本次实现的交接说明见 [`docs/development-handoff-2026-08-18.md`](docs/development-handoff-2026-08-18.md)，包括已完成范围、验证结果、已知限制和下次开发顺序。
+Work Rhythm 是一个本地优先的 macOS 工作节律工具。当前从 V0 桌面浮窗样机重新开始开发。
 
 ## 当前状态
 
-已完成 M0–M3：Tauri + React + TypeScript 双窗口、菜单栏、SQLite 迁移、活动管理、计时状态机、休息提醒、本地通知、今天页、历史补录、统计，以及 JSON／CSV 导出和 SQLite 备份。
+旧 Tauri 原型已从工作目录删除，不再参与开发；完整历史仍可从 Git 初始提交恢复。
 
-所有事实数据均写入 macOS 应用数据目录下的 SQLite 数据库。Mini Timer 仅在可见时本地更新显示；不会进行秒级 IPC 或数据库写入。
+下一阶段回到产品问题与核心使用闭环，先以本地浏览器原型快速验证，不要求打包、安装或部署 macOS App。
 
-## 本地运行
+当前唯一有效的产品与开发执行基准是 [`docs/development-baseline-v2.md`](docs/development-baseline-v2.md)。项目冻结原因与重启背景见 [`docs/project-status-2026-08-20.md`](docs/project-status-2026-08-20.md)。
 
-需先安装 Node.js 以及 [Rust 工具链](https://www.rust-lang.org/tools/install)，然后在本目录执行：
+## 文档归档
 
-```bash
-npm install
-npm run tauri dev
-```
+- [`docs/archive/`](docs/archive/)：2026-08-18 的桌面端执行基准与开发交接记录，仅供历史参考，已不再生效。
 
-常用校验：
+## 仓库结构
 
-```bash
-npm run check
-npm run test
-npm run format:check
-cargo check --manifest-path src-tauri/Cargo.toml
-```
+- `macos/`：新的 Swift / SwiftUI 原生实现；下一步仅在此创建 V0 浮窗样机。
+- `docs/`：当前基准、验收记录与历史归档。

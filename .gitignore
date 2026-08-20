@@ -1,13 +1,18 @@
-# Reproducible frontend dependencies and build output
-node_modules/
-dist/
-
-# Rust/Tauri build caches and generated binaries
-src-tauri/target/
-src-tauri/gen/
-
-# Locally archived installers; publish these through a release channel instead
-releases/*.dmg
-
 # macOS Finder metadata
 .DS_Store
+
+# Xcode and SwiftPM local build caches
+DerivedData/
+.build/
+build/
+.swiftpm/xcode/
+xcuserdata/
+*.xcuserstate
+*.xcarchive/
+*.xcresult/
+*.app/
+*.dSYM/
+
+# Raw local test recordings, debug logs, and distributable packages
+artifacts/
+releases/
