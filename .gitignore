@@ -1,0 +1,13 @@
+# Reproducible frontend dependencies and build output
+node_modules/
+dist/
+
+# Rust/Tauri build caches and generated binaries
+src-tauri/target/
+src-tauri/gen/
+
+# Locally archived installers; publish these through a release channel instead
+releases/*.dmg
+
+# macOS Finder metadata
+.DS_Store
