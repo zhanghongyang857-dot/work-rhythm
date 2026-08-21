@@ -11,19 +11,12 @@ struct WorkRhythmV0App: App {
 
     var body: some Scene {
         MenuBarExtra("Work Rhythm", systemImage: "timer") {
-            Button("显示浮窗") {
-                appDelegate.showPanel()
-            }
-            Button("隐藏浮窗") {
-                appDelegate.hidePanel()
-            }
-            Button("管理活动与复盘") {
-                openWindow(id: "activity-management")
-            }
-            Divider()
-            Button("退出测试") {
-                NSApplication.shared.terminate(nil)
-            }
+            MenuBarContent(
+                timer: appDelegate.timer,
+                showPanel: appDelegate.showPanel,
+                hidePanel: appDelegate.hidePanel,
+                openReview: { openWindow(id: "activity-management") }
+            )
         }
         .menuBarExtraStyle(.menu)
 
@@ -31,6 +24,62 @@ struct WorkRhythmV0App: App {
             ActivityManagementView(timer: appDelegate.timer)
         }
         .defaultSize(width: 800, height: 660)
+    }
+}
+
+private struct MenuBarContent: View {
+    @ObservedObject var timer: TimerViewModel
+    let showPanel: () -> Void
+    let hidePanel: () -> Void
+    let openReview: () -> Void
+
+    var body: some View {
+        Button("显示浮窗", action: showPanel)
+        Button("隐藏浮窗", action: hidePanel)
+        Button("管理活动与复盘", action: openReview)
+        Divider()
+        Button("检查更新") { timer.checkForUpdates() }
+        updateStatus
+        Divider()
+        Button("创建本地数据备份") { timer.createDataBackup() }
+        if let backupMessage = timer.backupMessage {
+            Text(backupMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if let storageErrorMessage = timer.storageErrorMessage {
+            Text(storageErrorMessage)
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+        Divider()
+        Button("退出") { NSApplication.shared.terminate(nil) }
+    }
+
+    @ViewBuilder
+    private var updateStatus: some View {
+        switch timer.updateState {
+        case .idle:
+            EmptyView()
+        case .checking:
+            Text("正在检查更新…")
+                .foregroundStyle(.secondary)
+        case .upToDate:
+            Text("已是最新版本")
+                .foregroundStyle(.secondary)
+        case .updateAvailable(let release):
+            Button("下载 \(release.version)") { timer.openUpdatePage(release) }
+            if !release.notes.isEmpty {
+                Text(release.notes)
+                    .lineLimit(2)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .unavailable(let message):
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -127,9 +176,13 @@ final class TimerViewModel: ObservableObject {
     @Published private(set) var activities: [Activity]
     @Published private(set) var selectedActivityID: UUID?
     @Published private(set) var records: [FocusRecord]
+    @Published private(set) var updateState: UpdateCheckState = .idle
+    @Published private(set) var storageErrorMessage: String?
+    @Published private(set) var backupMessage: String?
     private var ticker: Timer?
     private let stateStore: LocalStateStore
     private var activeSegment: ActiveFocusSegment?
+    private var persistenceIsAvailable = true
 
     var now: Date { Date() }
     var todayFocus: TimeInterval {
@@ -158,7 +211,17 @@ final class TimerViewModel: ObservableObject {
 
     init(stateStore: LocalStateStore = LocalStateStore()) {
         self.stateStore = stateStore
-        guard let restored = stateStore.load() else {
+        storageErrorMessage = nil
+        backupMessage = nil
+        let restored: PersistedAppState?
+        do {
+            restored = try stateStore.load()
+        } catch {
+            restored = nil
+            persistenceIsAvailable = false
+            storageErrorMessage = (error as? LocalStateStoreError)?.localizedDescription ?? "本地数据无法读取。"
+        }
+        guard let restored else {
             engine = TimerEngine()
             activities = []
             selectedActivityID = nil
@@ -323,6 +386,37 @@ final class TimerViewModel: ObservableObject {
         }
     }
 
+    func checkForUpdates() {
+        guard updateState != .checking else { return }
+        updateState = .checking
+        Task { [weak self] in
+            do {
+                let release = try await UpdateChecker.latestRelease()
+                guard let self else { return }
+                let currentVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+                updateState = UpdateChecker.isNewer(release.version, than: currentVersion)
+                    ? .updateAvailable(release)
+                    : .upToDate
+            } catch {
+                guard let self else { return }
+                updateState = .unavailable((error as? LocalizedError)?.errorDescription ?? "暂时无法检查更新。")
+            }
+        }
+    }
+
+    func openUpdatePage(_ release: AvailableRelease) {
+        NSWorkspace.shared.open(release.pageURL)
+    }
+
+    func createDataBackup() {
+        do {
+            let backupURL = try stateStore.createBackup()
+            backupMessage = "已创建备份：\(backupURL.lastPathComponent)"
+        } catch {
+            backupMessage = (error as? LocalStateStoreError)?.localizedDescription ?? "无法创建本地数据备份。"
+        }
+    }
+
     func prepareForTermination() {
         if engine.status == .running { pause() } else { persist() }
     }
@@ -348,14 +442,20 @@ final class TimerViewModel: ObservableObject {
     }
 
     private func persist(at date: Date? = nil) {
-        stateStore.save(PersistedAppState(
-            activities: activities,
-            selectedActivityID: selectedActivityID,
-            engine: engine,
-            records: records,
-            activeSegment: activeSegment,
-            savedAt: date ?? now
-        ))
+        guard persistenceIsAvailable else { return }
+        do {
+            try stateStore.save(PersistedAppState(
+                activities: activities,
+                selectedActivityID: selectedActivityID,
+                engine: engine,
+                records: records,
+                activeSegment: activeSegment,
+                savedAt: date ?? now
+            ))
+        } catch {
+            persistenceIsAvailable = false
+            storageErrorMessage = (error as? LocalStateStoreError)?.localizedDescription ?? "本地数据无法保存。"
+        }
     }
 
     private func refresh() {
@@ -441,6 +541,10 @@ struct V0FloatingTimerView: View {
                             .disabled(timer.engine.status == .idle)
                         Divider()
                         Button("开启系统提醒") { timer.enableNotifications() }
+                        Button("检查更新") { timer.checkForUpdates() }
+                        if case .updateAvailable(let release) = timer.updateState {
+                            Button("下载 \(release.version)") { timer.openUpdatePage(release) }
+                        }
                     } label: {
                         Image(systemName: "ellipsis")
                             .frame(width: 28, height: 28)

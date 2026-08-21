@@ -10,6 +10,8 @@ Work Rhythm 是一个本地优先的 macOS 工作节律工具。MVP 的核心计
 
 当前唯一有效的产品与开发执行基准是 [`docs/development-plan-v3.md`](docs/development-plan-v3.md)。原生重启背景见 [`docs/project-status-2026-08-20.md`](docs/project-status-2026-08-20.md)。
 
+首发版本采用 GitHub Releases 下载与应用内手动检查更新。生成发布包、上传 Release 和客户安装说明见 [`docs/first-release-guide.md`](docs/first-release-guide.md)。
+
 ## 文档归档
 
 - [`docs/archive/`](docs/archive/)：2026-08-18 的桌面端执行基准与开发交接记录，仅供历史参考，已不再生效。
