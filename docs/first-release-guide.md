@@ -14,16 +14,18 @@
 
 ## 本地生成首发包
 
+`v0.1.0` 是已推送的发布流程基线标签，没有对应下载包，不用于客户安装。首个客户可下载版本从 `v0.1.1` 开始。
+
 在项目根目录执行：
 
 ```zsh
-macos/scripts/build-release.sh 0.1.0 1
+macos/scripts/build-release.sh 0.1.1 2
 ```
 
 生成的文件位于：
 
 ```text
-artifacts/releases/v0.1.0/
+artifacts/releases/v0.1.1/
 ├── Work Rhythm.app
 ├── Work-Rhythm-macOS.zip
 └── Work-Rhythm-macOS.zip.sha256
@@ -33,9 +35,9 @@ artifacts/releases/v0.1.0/
 
 ## 发布到 GitHub
 
-1. 将发布代码提交并打标签，例如 `v0.1.0`。
+1. 将发布代码提交并打标签，例如 `v0.1.1`。
 2. 在 GitHub 仓库的 **Releases** 页面选择 **Draft a new release**。
-3. 选择标签 `v0.1.0`，填写简短更新说明。
+3. 选择标签 `v0.1.1`，填写简短更新说明。
 4. 上传 `Work-Rhythm-macOS.zip` 和对应的 `.sha256` 文件，然后发布。
 5. 将以下最新版本链接发给客户：
 
@@ -47,7 +49,7 @@ https://github.com/zhanghongyang857-dot/work-rhythm/releases/latest
 
 ## 客户安装和更新
 
-首次安装：打开上述链接，下载 `Work-Rhythm-macOS.zip`，解压后将 `Work Rhythm.app` 拖入“应用程序”文件夹。
+首次安装：打开上述链接，下载 `Work-Rhythm-macOS.zip`，解压后将 `Work Rhythm.app` 拖入“应用程序”文件夹。正式版数据位于 `com.zhanghongyang.workrhythm`；通过本地调试脚本启动的测试版则使用独立的 `com.zhanghongyang.workrhythm.debug` 目录，两者可同时安装、互不读取或覆盖数据。
 
 以后更新：在菜单栏的 Work Rhythm 图标中点击“检查更新”。如有新版，点击“下载 vX.Y.Z”，下载并解压后用新 App 替换“应用程序”中的旧 App。专注数据保存在 Application Support，替换 App 不会删除它。
 

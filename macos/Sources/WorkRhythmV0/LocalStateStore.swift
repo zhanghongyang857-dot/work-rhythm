@@ -54,8 +54,16 @@ struct LocalStateStore {
 
     private var storageDirectory: URL {
         let directory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("com.zhanghongyang.workrhythm", isDirectory: true)
+            .appendingPathComponent(storageDirectoryName, isDirectory: true)
         return directory
+    }
+
+    private var storageDirectoryName: String {
+#if DEBUG
+        "com.zhanghongyang.workrhythm.debug"
+#else
+        "com.zhanghongyang.workrhythm"
+#endif
     }
 
     private var stateURL: URL {
